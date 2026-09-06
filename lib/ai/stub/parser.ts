@@ -150,9 +150,13 @@ function readQualifyingStake(text: string): FieldReading<string> {
 }
 
 function readRewardTotal(text: string): FieldReading<string> {
+  // "up to" is checked first wherever it appears, because a maximum read as a
+  // fixed amount overstates what the customer will actually receive.
   const patterns = [
-    /(?:get|receive|claim)\s+(?:up\s+to\s+)?£\s?([\d,]+(?:\.\d{2})?)/i,
-    /£\s?([\d,]+(?:\.\d{2})?)\s+in\s+free\s+bets?/i,
+    /up\s+to\s+£\s?([\d,]+(?:\.\d{2})?)/i,
+    /(?:get|receive|claim|credit|award)\s+(?:you\s+)?(?:a|an|one)?\s*£\s?([\d,]+(?:\.\d{2})?)/i,
+    /£\s?([\d,]+(?:\.\d{2})?)\s+(?:in\s+)?free\s+bets?/i,
+    /£\s?([\d,]+(?:\.\d{2})?)\s+as\s+a\s+free\s+bet/i,
   ];
   for (const pattern of patterns) {
     const match = firstMatch(text, pattern);
@@ -162,7 +166,9 @@ function readRewardTotal(text: string): FieldReading<string> {
         money(match[1]),
         uncertain ? 0.5 : 0.9,
         match[0],
-        uncertain ? "Stated as a maximum, so the actual reward may be lower." : undefined,
+        uncertain
+          ? "Stated as a maximum, so the actual reward may be lower than this."
+          : undefined,
       );
     }
   }
@@ -181,12 +187,23 @@ function readTokens(text: string): {
     };
   }
 
+  // "a £10 free bet" and "one £10 free bet" both state a single token, which
+  // is a fact in the terms rather than an inference from silence.
   const worded = firstMatch(
     text,
-    /\b(one|two|three|four|five|six)\s+£\s?([\d,]+(?:\.\d{2})?)\s+free\s+bets?/i,
+    /\b(a|an|one|two|three|four|five|six)\s+£\s?([\d,]+(?:\.\d{2})?)\s+free\s+bets?/i,
   );
   if (worded?.[1] && worded[2]) {
-    const words: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+    const words: Record<string, number> = {
+      a: 1,
+      an: 1,
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+    };
     return {
       count: read(words[worded[1].toLowerCase()]!, 0.85, worded[0]),
       value: read(money(worded[2]), 0.85, worded[0]),
