@@ -7,9 +7,6 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   serverExternalPackages: ["@prisma/client", "pino", "pg-boss"],
-  experimental: {
-    typedRoutes: false,
-  },
 };
 
 export default nextConfig;
