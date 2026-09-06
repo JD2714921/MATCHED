@@ -1,0 +1,52 @@
+{
+  "name": "matched",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MATCHED — UK-focused matched-betting intelligence platform. AI interprets. Code calculates. APIs provide market data. Humans execute.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "lint:safety": "tsx scripts/lint-safety.ts",
+    "lint:copy": "tsx scripts/lint-copy.ts",
+    "lint:all": "npm run lint:safety && npm run lint:copy",
+    "db:up": "bash scripts/dev-db.sh start",
+    "db:down": "bash scripts/dev-db.sh stop",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate",
+    "db:seed": "tsx prisma/seed.ts",
+    "verify:betfair": "tsx scripts/verify-betfair.ts",
+    "worker": "tsx worker/index.ts",
+    "check": "npm run typecheck && npm run lint:all && npm run test"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.2",
+    "decimal.js": "^10.6.0",
+    "next": "^15.5.25",
+    "pg-boss": "^10.3.2",
+    "pino": "^9.5.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "pino-pretty": "^13.0.0",
+    "prisma": "^6.16.2",
+    "tailwindcss": "^4.1.13",
+    "tsx": "^4.19.2",
+    "typescript": "^6.0.0",
+    "vitest": "^3.0.0"
+  }
+}
