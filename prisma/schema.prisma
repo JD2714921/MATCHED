@@ -1,0 +1,533 @@
+// MATCHED data model.
+//
+// Two rules shape this schema and are enforced by scripts/lint-safety.ts:
+//
+//  1. NO third-party credential may be storable. A customer's bookmaker and
+//     exchange logins are theirs; this platform never holds them, because it
+//     never places a bet. `UserOperatorAccount` therefore records only the
+//     STATE of an account, never a way to access one.
+//
+//  2. Money is NUMERIC(14,2) and odds/rates are NUMERIC(10,4). Prisma maps
+//     both to decimal.js instances, so a figure never becomes a float between
+//     the database and the calculation engine.
+//
+// The only credential in the whole schema is our own: the customer's password
+// for THIS service, and the hash of their session token.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  displayName String?
+  role        UserRole @default(CUSTOMER)
+
+  /// scrypt, encoded as "scrypt$N$r$p$saltB64$hashB64". Our own auth only.
+  passwordHash String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions         UserSession[]
+  operatorAccounts UserOperatorAccount[]
+  bankrollAccounts BankrollAccount[]
+  betPlans         BetPlan[]
+  ledgerEntries    LedgerEntry[]
+  auditLogs        AuditLog[]
+
+  @@index([role])
+}
+
+model UserSession {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the opaque session token. The token itself is never stored,
+  /// so a database disclosure cannot be replayed as a login.
+  tokenHash String @unique
+
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime
+  userAgent  String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Operators and promotion sourcing
+// ---------------------------------------------------------------------------
+
+model Operator {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  slug        String  @unique
+  /// Every operator in seed data is invented. Reproducing a real bookmaker's
+  /// terms would be someone else's copyright and would imply a commercial
+  /// relationship that does not exist.
+  isFictional Boolean @default(true)
+  websiteUrl  String?
+  notes       String?
+
+  createdAt DateTime @default(now())
+
+  promotions Promotion[]
+  sources    PromotionSource[]
+  accounts   UserOperatorAccount[]
+  betPlans   BetPlan[]
+  bankrolls  BankrollAccount[]
+}
+
+enum CollectionMethod {
+  /// Typed in by a member of staff from a page they were looking at.
+  MANUAL_ENTRY
+  /// Supplied by the operator through an affiliate feed we are party to.
+  OPERATOR_AFFILIATE_FEED
+  /// Fetched from a public page. Requires explicit approval — see below.
+  PUBLIC_PAGE_FETCH
+  /// Supplied by the operator through an agreed API.
+  PARTNER_API
+}
+
+model PromotionSource {
+  id         String   @id @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  name             String
+  collectionMethod CollectionMethod
+  url              String?
+  enabled          Boolean          @default(true)
+
+  /// Automated collection is OFF until an administrator records both a
+  /// robots.txt check and a terms-of-use review. Defaulting this to false is
+  /// the point of the field: nothing crawls anything by accident.
+  automatedCollectionApproved Boolean @default(false)
+
+  robotsTxtCheckedAt DateTime?
+  robotsTxtCheckedBy String?
+  robotsTxtAllows    Boolean?
+  termsReviewedAt    DateTime?
+  termsReviewedBy    String?
+  approvalNote       String?
+
+  lastCollectedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  captures   RawPromotionCapture[]
+  promotions Promotion[]
+
+  @@index([operatorId])
+}
+
+/// The operator's own words, stored verbatim and never edited.
+///
+/// Everything downstream is an interpretation OF this record, and the admin
+/// screen shows the two side by side so a person can see exactly what the
+/// reading changed.
+model RawPromotionCapture {
+  id       String          @id @default(cuid())
+  sourceId String
+  source   PromotionSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  capturedAt  DateTime @default(now())
+  rawTitle    String?
+  rawText     String
+  contentHash String
+  sourceUrl   String?
+
+  promotions Promotion[]
+
+  @@index([sourceId])
+  @@index([contentHash])
+}
+
+enum PromotionStatus {
+  DRAFT
+  /// The interpretation was not confident enough to publish. A person must look.
+  NEEDS_VERIFICATION
+  PUBLISHED
+  REJECTED
+  EXPIRED
+}
+
+enum PromotionKind {
+  SIGN_UP
+  RELOAD
+  REFUND_AS_TOKEN
+  ODDS_BOOST
+  ACCA_INSURANCE
+  OTHER
+}
+
+enum FreeBetType {
+  /// Stake not returned — winnings only.
+  SNR
+  /// Stake returned with winnings.
+  SR
+  /// The terms did not say. Never guessed.
+  UNKNOWN
+}
+
+model Promotion {
+  id           String               @id @default(cuid())
+  operatorId   String
+  operator     Operator             @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  sourceId     String?
+  source       PromotionSource?     @relation(fields: [sourceId], references: [id])
+  rawCaptureId String?
+  rawCapture   RawPromotionCapture? @relation(fields: [rawCaptureId], references: [id])
+
+  status PromotionStatus @default(DRAFT)
+  kind   PromotionKind   @default(OTHER)
+  title  String
+  summary String?
+
+  // --- Interpreted terms. Every one is nullable, because "the terms did not
+  // --- say" is a real and common answer that must never be filled in by guess.
+  qualifyingStake   Decimal? @db.Decimal(14, 2)
+  minQualifyingOdds Decimal? @db.Decimal(10, 4)
+  maxQualifyingOdds Decimal? @db.Decimal(10, 4)
+
+  rewardTotalValue Decimal? @db.Decimal(14, 2)
+  rewardTokenCount Int?
+  rewardTokenValue Decimal? @db.Decimal(14, 2)
+  /// The single most valuable field in a set of terms.
+  freeBetType      FreeBetType @default(UNKNOWN)
+  freeBetExpiryDays Int?
+  minRewardOdds    Decimal? @db.Decimal(10, 4)
+  maxRewardOdds    Decimal? @db.Decimal(10, 4)
+
+  eligibleSports      String[]
+  wageringRequirement String?
+  termsUrl            String?
+  termsNotes          String?
+
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  publishedAt      DateTime?
+  publishedById    String?
+  verifiedAt       DateTime?
+  verifiedById     String?
+  rejectionReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  interpretations PromotionInterpretation[]
+  betPlans        BetPlan[]
+
+  @@index([status])
+  @@index([operatorId])
+}
+
+/// One reading of one capture, by one provider, at one moment.
+///
+/// Kept forever: it is the evidence for why a promotion says what it says, and
+/// the admin diff is built from it.
+model PromotionInterpretation {
+  id          String    @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime @default(now())
+  providerName  String
+  providerModel String?
+
+  /// 0.0000 to 1.0000. Zero means "could not read this at all".
+  confidence Decimal @db.Decimal(10, 4)
+
+  /// Per-field value, confidence and the phrase it was read from.
+  fields Json
+
+  /// Fields the terms were silent on. Present so the admin screen can show
+  /// what was NOT answered as prominently as what was.
+  unreadableFields String[]
+
+  reasoning String?
+
+  /// True when NumericGuard rejected a figure the model produced.
+  numericGuardFired  Boolean @default(false)
+  numericGuardDetail String?
+
+  latencyMs Int?
+
+  @@index([promotionId])
+}
+
+// ---------------------------------------------------------------------------
+// Customer state
+// ---------------------------------------------------------------------------
+
+enum AccountStatus {
+  NOT_OPENED
+  OPEN
+  OFFER_USED
+  RESTRICTED
+  CLOSED
+}
+
+/// What the customer has told us about their own account with an operator.
+///
+/// There are deliberately NO fields here that could hold a login, a password,
+/// an API key or a session for a third party. This platform does not access a
+/// customer's operator accounts; they place every bet themselves.
+model UserOperatorAccount {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  status   AccountStatus @default(NOT_OPENED)
+  openedAt DateTime?
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, operatorId])
+  @@index([userId])
+}
+
+enum BankrollKind {
+  EXCHANGE
+  BOOKMAKER
+}
+
+model BankrollAccount {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind       BankrollKind
+  label      String
+  operatorId String?
+  operator   Operator?    @relation(fields: [operatorId], references: [id])
+
+  balance Decimal @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Bet lifecycle — recorded after the fact, from what the customer actually got
+// ---------------------------------------------------------------------------
+
+enum BetPlanStatus {
+  PLANNED
+  QUALIFYING_PLACED
+  QUALIFYING_SETTLED
+  TOKEN_RECEIVED
+  CONVERSION_PLACED
+  COMPLETED
+  ABANDONED
+}
+
+enum BetLegStage {
+  QUALIFYING
+  CONVERSION
+}
+
+enum BetLegSide {
+  BACK
+  LAY
+}
+
+enum BetLegOutcome {
+  PENDING
+  WON
+  LOST
+  VOID
+}
+
+model BetPlan {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  promotionId String?
+  promotion   Promotion? @relation(fields: [promotionId], references: [id])
+  operatorId  String
+  operator    Operator   @relation(fields: [operatorId], references: [id])
+
+  status BetPlanStatus @default(PLANNED)
+
+  eventName     String
+  marketName    String
+  selectionName String
+  eventStartsAt DateTime?
+
+  /// What we calculated when the customer started. Kept so the record shows
+  /// what we told them, next to what actually happened.
+  plannedNet    Decimal? @db.Decimal(14, 2)
+  plannedRating Decimal? @db.Decimal(10, 4)
+
+  /// Computed from the legs the customer actually recorded.
+  realisedNet Decimal? @db.Decimal(14, 2)
+
+  notes String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  legs         BetLeg[]
+  ledgerEntries LedgerEntry[]
+  priceQuotes  MarketPriceQuote[]
+
+  @@index([userId, status])
+  @@index([promotionId])
+}
+
+model BetLeg {
+  id        String  @id @default(cuid())
+  betPlanId String
+  betPlan   BetPlan @relation(fields: [betPlanId], references: [id], onDelete: Cascade)
+
+  stage BetLegStage
+  side  BetLegSide
+  /// One of the engine's BetType values, for the back leg.
+  betType String?
+
+  /// The figures we suggested.
+  suggestedStake Decimal @db.Decimal(14, 2)
+  suggestedOdds  Decimal @db.Decimal(10, 4)
+
+  /// The figures the customer actually got. Null until they record them.
+  /// Lays fill worse than the screen showed; the profit figures are computed
+  /// from these, never from the suggestions.
+  actualStake Decimal? @db.Decimal(14, 2)
+  actualOdds  Decimal? @db.Decimal(10, 4)
+
+  commissionRate Decimal  @default(0) @db.Decimal(10, 4)
+  liability      Decimal? @db.Decimal(14, 2)
+
+  /// Free text: "Northgate Bet" or "Fixture Exchange". Not a login.
+  venue String
+
+  outcome      BetLegOutcome @default(PENDING)
+  returnAmount Decimal?      @db.Decimal(14, 2)
+
+  placedAt  DateTime?
+  settledAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([betPlanId])
+}
+
+enum LedgerEntryKind {
+  QUALIFYING_LOSS
+  TOKEN_CONVERSION
+  COMMISSION
+  ADJUSTMENT
+}
+
+model LedgerEntry {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  betPlanId String?
+  betPlan   BetPlan? @relation(fields: [betPlanId], references: [id], onDelete: SetNull)
+
+  kind        LedgerEntryKind
+  amount      Decimal         @db.Decimal(14, 2)
+  description String
+  occurredAt  DateTime        @default(now())
+
+  @@index([userId, occurredAt])
+}
+
+// ---------------------------------------------------------------------------
+// Market data audit
+// ---------------------------------------------------------------------------
+
+/// A price we showed, kept so a calculation can be reproduced later.
+///
+/// `isDelayed` is carried from the exchange's own flag, not inferred, and is
+/// surfaced as a badge on every price in the UI.
+model MarketPriceQuote {
+  id        String   @id @default(cuid())
+  betPlanId String?
+  betPlan   BetPlan? @relation(fields: [betPlanId], references: [id], onDelete: SetNull)
+
+  provider     String
+  marketId     String
+  selectionId  String
+  marketName   String?
+  selectionName String?
+
+  /// The exchange's best available back price. INDICATIVE ONLY: it is not a
+  /// bookmaker price, and the UI must never present it as one.
+  indicativeBackPrice Decimal? @db.Decimal(10, 4)
+  bestLayPrice        Decimal? @db.Decimal(10, 4)
+  layDepthAtBest      Decimal? @db.Decimal(14, 2)
+
+  /// What the customer typed in from the bookmaker they actually have open.
+  customerEnteredBackPrice Decimal? @db.Decimal(10, 4)
+
+  isDelayed        Boolean @default(true)
+  tradedVolumeAvailable Boolean @default(false)
+
+  capturedAt DateTime @default(now())
+
+  @@index([marketId])
+  @@index([betPlanId])
+}
+
+model ExchangeHealthCheck {
+  id        String   @id @default(cuid())
+  provider  String
+  ok        Boolean
+  latencyMs Int?
+  message   String?
+  dataDelayed Boolean @default(true)
+  checkedAt DateTime @default(now())
+
+  @@index([provider, checkedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  action     String
+  entityType String
+  entityId   String?
+  detail     Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
