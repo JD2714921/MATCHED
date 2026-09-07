@@ -61,9 +61,21 @@ test("a customer works an offer from the dashboard to a realised return", async 
   await expect(page.getByText(/not your bookmaker/i)).toBeVisible();
 
   // Enter the price the customer's own bookmaker is showing.
-  await page.getByTestId("bookmaker-price").fill("3.40");
+  //
+  // Derived from the selection's own indicative price rather than hardcoded: a
+  // fixed number would be nonsense against whichever selection the engine
+  // happens to rank first, and would produce a position no real customer could
+  // hold — and figures on the profit screen that make no sense.
+  const qualifyingPrice = await bookmakerPriceNear(page, 0.98);
+  await page.getByTestId("bookmaker-price").fill(qualifyingPrice);
   await page.getByTestId("apply-bookmaker-price").click();
   await expect(page.getByText(/Calculated from the price you entered/i)).toBeVisible();
+
+  // The entered price must actually drive the calculation, not merely change
+  // the label above it.
+  // Appears both as the instruction and inside the settlement note, so take
+  // the first.
+  await expect(page.getByText(`at ${qualifyingPrice}`).first()).toBeVisible();
 
   // ---- 8. See the result under every outcome ----------------------------
   const settlement = page.getByTestId("settlement");
@@ -84,8 +96,11 @@ test("a customer works an offer from the dashboard to a realised return", async 
 
   // ---- 9. Mark the qualifying stage complete ----------------------------
   await expect(page.getByTestId("stage-track")).toBeVisible();
-  // Record what actually happened: the lay filled a tick worse than suggested.
-  await page.getByTestId("lay-odds").fill("3.30");
+  // Record what actually happened: the lay filled slightly worse than
+  // suggested, which is the normal case and what makes realised differ from
+  // calculated. Read from the suggestion so it stays plausible.
+  const suggestedLay = await page.getByTestId("lay-odds").getAttribute("placeholder");
+  await page.getByTestId("lay-odds").fill((Number(suggestedLay) * 1.02).toFixed(2));
   await page.getByTestId("settle-qualifying").click();
   await expect(page.getByText("Qualifying settled")).toBeVisible({ timeout: 20_000 });
 
@@ -105,7 +120,8 @@ test("a customer works an offer from the dashboard to a realised return", async 
   await conversionRows.first().click();
   await expect(page.getByTestId("lay-stake")).toBeVisible();
 
-  await page.getByTestId("bookmaker-price").fill("5.00");
+  const conversionPrice = await bookmakerPriceNear(page, 0.98);
+  await page.getByTestId("bookmaker-price").fill(conversionPrice);
   await page.getByTestId("apply-bookmaker-price").click();
   await expect(page.getByText(/Calculated from the price you entered/i)).toBeVisible();
 
@@ -135,16 +151,54 @@ test("a customer works an offer from the dashboard to a realised return", async 
   await page.goto("/");
   const realisedPanel = page.getByText("Realised return");
   await expect(realisedPanel).toBeVisible();
-  await expect(page.getByText(/1 completed position/)).toBeVisible();
+  // At least one, rather than exactly one: the database is shared between runs
+  // and pinning the count would make this fail for a reason unrelated to the
+  // journey.
+  await expect(page.getByText(/[1-9]\d* completed position/)).toBeVisible();
 
   await page.goto("/profit");
   await expect(page.getByTestId("completed-table")).toBeVisible();
   await expect(page.getByTestId("realised-cell").first()).toBeVisible();
 
+  // A qualifying bet costs money — that is the whole point of it. A positive
+  // figure here would mean the journey fed the engine prices no real customer
+  // could get, and the screen would be quietly nonsense.
+  const qualifyingCost = await page.getByTestId("qualifying-cost").innerText();
+  expect(qualifyingCost, "a qualifying bet must show as a cost, not a gain").toContain("−");
+
+  // The calculated figure beside a realised one must cover the same stages.
+  // Comparing a one-stage calculation with a two-stage result would make the
+  // "against calculation" figure meaningless.
+  const calculated = await page
+    .getByTestId("completed-table")
+    .locator("tbody tr")
+    .first()
+    .locator("td")
+    .nth(1)
+    .innerText();
+  expect(calculated, "the plan's calculated total must include the conversion").not.toContain("−");
+
   // The dashboard's realised figure must be the one the position recorded.
   await page.goto(planUrl);
   await expect(page.getByTestId("realised-net")).toHaveText(realised);
 });
+
+/**
+ * A plausible bookmaker price for the selected market.
+ *
+ * The bookmaker price input placeholders with the exchange's indicative price,
+ * so a realistic entry is that price nudged by a small factor. Bookmakers price
+ * a promotional selection near the exchange, not multiples away from it.
+ */
+async function bookmakerPriceNear(page: Page, factor: number): Promise<string> {
+  const indicative = await page.getByTestId("bookmaker-price").getAttribute("placeholder");
+  const price = Number(indicative);
+  expect(Number.isFinite(price) && price > 1, `unusable indicative price: ${indicative}`).toBe(true);
+  // Slightly below the exchange's back price, which is where a bookmaker
+  // usually sits and, unlike a price above it, cannot accidentally produce an
+  // arbitrage that would make a qualifying bet show a profit.
+  return (price * factor).toFixed(2);
+}
 
 /**
  * Add each settlement column up by hand and check it equals the net printed

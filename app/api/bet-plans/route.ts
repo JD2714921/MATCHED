@@ -100,6 +100,14 @@ export async function POST(request: Request) {
   });
 
   if (existing) {
+    // The plan's calculated figure must cover every stage it now contains.
+    // Leaving it at the qualifying stage's number would put a one-stage
+    // calculation beside a two-stage realised result on the profit screen, and
+    // the comparison between them would be meaningless.
+    const combinedPlannedNet = new Prisma.Decimal(existing.plannedNet ?? 0).plus(
+      new Prisma.Decimal(input.plannedNet),
+    );
+
     await prisma.betPlan.update({
       where: { id: plan.id },
       data: {
@@ -107,6 +115,8 @@ export async function POST(request: Request) {
         selectionName: input.selectionName,
         eventName: input.eventName,
         marketName: input.marketName,
+        plannedNet: combinedPlannedNet,
+        plannedRating: new Prisma.Decimal(input.plannedRating),
       },
     });
   }

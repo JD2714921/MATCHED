@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { D, sum } from "@/lib/math";
-import { asMoney } from "@/lib/serialize";
+import { asMoney, formatMoney } from "@/lib/serialize";
 import { realisedResult } from "@/lib/bets";
 import { EmptyState, Money, Note, PageHeader, Panel, Stat } from "@/components/ui";
 
@@ -59,21 +59,24 @@ export default async function ProfitPage() {
         <div className="grid grid-cols-2 gap-x-8 gap-y-6 px-6 py-5 md:grid-cols-4">
           <Stat
             label="Realised return"
-            value={`£${asMoney(total)}`}
+            value={formatMoney(asMoney(total))}
             hint={`${completed.length} completed position${completed.length === 1 ? "" : "s"}`}
             tone={total.isNegative() ? "negative" : "positive"}
+            testId="realised-return"
           />
           <Stat
             label="Cost of qualifying"
-            value={`£${asMoney(qualifying)}`}
+            value={formatMoney(asMoney(qualifying))}
             hint="what it cost to unlock the tokens"
             tone={qualifying.isNegative() ? "negative" : "default"}
+            testId="qualifying-cost"
           />
           <Stat
             label="From conversions"
-            value={`£${asMoney(conversion)}`}
+            value={formatMoney(asMoney(conversion))}
             hint="what the tokens converted to"
-            tone="positive"
+            tone={conversion.isNegative() ? "negative" : "positive"}
+            testId="conversion-value"
           />
           <Stat
             label="Against calculation"

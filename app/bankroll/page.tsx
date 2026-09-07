@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { prisma, Prisma } from "@/lib/db";
 import { getCurrentUser, requireUser } from "@/lib/auth";
 import { D, bankrollRequirement, calculateHedge, DEFAULT_ROUNDING } from "@/lib/math";
-import { asMoney } from "@/lib/serialize";
+import { asMoney, formatMoney } from "@/lib/serialize";
 import { Badge, Money, Note, PageHeader, Panel, Stat } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -88,7 +88,7 @@ export default async function BankrollPage() {
           />
           <Stat
             label="Free at the exchange"
-            value={`£${asMoney(exchange.minus(committed))}`}
+            value={formatMoney(asMoney(exchange.minus(committed)))}
             hint="what is left to lay with"
             tone={exchange.minus(committed).isNegative() ? "negative" : "default"}
           />

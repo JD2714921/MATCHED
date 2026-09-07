@@ -3,7 +3,7 @@ import { D } from "@/lib/math";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { buildOpportunities, summarise, type OpportunityView } from "@/lib/opportunities";
-import { asMoney } from "@/lib/serialize";
+import { asMoney, formatMoney } from "@/lib/serialize";
 import { Badge, EmptyState, Money, Note, Panel, Stat } from "@/components/ui";
 import { OpportunityCard } from "@/components/opportunity-card";
 
@@ -91,7 +91,7 @@ export default async function TodayPage() {
             />
             <Stat
               label="Calculated promotional value"
-              value={`£${summary.calculatedPromotionalValue}`}
+              value={formatMoney(summary.calculatedPromotionalValue)}
               hint="across every outcome, at indicative prices"
               tone="positive"
             />
@@ -191,7 +191,11 @@ export default async function TodayPage() {
           <div className="px-5 py-5">
             <Stat
               label="Realised return"
-              value={`£${completed?._sum.realisedNet ? asMoney(new D(completed._sum.realisedNet.toString())) : "0.00"}`}
+              value={formatMoney(
+                completed?._sum.realisedNet
+                  ? asMoney(new D(completed._sum.realisedNet.toString()))
+                  : "0.00",
+              )}
               hint={`${completed?._count ?? 0} completed position${completed?._count === 1 ? "" : "s"}`}
               tone={
                 completed?._sum.realisedNet && Number(completed._sum.realisedNet) < 0

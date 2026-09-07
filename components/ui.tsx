@@ -44,11 +44,13 @@ export function Stat({
   value,
   hint,
   tone = "default",
+  testId,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: "default" | "positive" | "negative" | "caution";
+  testId?: string;
 }) {
   const toneClass =
     tone === "positive"
@@ -63,7 +65,10 @@ export function Stat({
       <div className="text-[11px] font-medium uppercase tracking-[0.06em] text-ink-faint">
         {label}
       </div>
-      <div className={`figure mt-1.5 text-[26px] font-semibold leading-none ${toneClass}`}>
+      <div
+        className={`figure mt-1.5 text-[26px] font-semibold leading-none ${toneClass}`}
+        data-testid={testId}
+      >
         {value}
       </div>
       {hint && <div className="mt-1.5 text-[12px] leading-snug text-ink-faint">{hint}</div>}
