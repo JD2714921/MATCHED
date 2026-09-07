@@ -63,6 +63,7 @@ export const EXPLANATION_SYSTEM_PROMPT = [
   "1. You must NOT calculate, estimate, derive or round any monetary or percentage figure.",
   "2. You may state a figure ONLY by copying one you were given, exactly as it was written.",
   "3. If a sentence would need a figure you were not given, write the sentence without it.",
+  // lint-copy-allow: the prompt must name the forbidden phrases in order to forbid them
   "4. Never describe any outcome as guaranteed, risk-free or without risk. Describe what the calculation shows across the possible outcomes.",
   "5. Be brief and concrete. Two or three sentences.",
 ].join("\n");
